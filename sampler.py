@@ -24,7 +24,7 @@ do_barygd = True
 
 
 # mesh parameters
-n_mesh = 128
+n_mesh = 1024
 mesh_x_min, mesh_x_max = -6, 6
 #mesh = np.ogrid[mesh_x_min:mesh_x_max:complex(0, n_mesh)]
 mesh = np.linspace(mesh_x_min, mesh_x_max, num=n_mesh)
@@ -38,14 +38,14 @@ simul_params = {
     'n_eigenvalues': -1,
     'langevin_perturbation': False,
     'langevin_factor': 1,
-    'g_conv': True,
-    'n_iterations': 5000,
-    'initial_domain': (4.5, 5),
+    'g_conv': False,
+    'n_iterations': 200,
+    'initial_domain': (-0.5, 0.5),
     'fd_step_size': (mesh_x_max - mesh_x_min) / (n_mesh - 1),
     'tfd_step_size': 1e-6,
     'gd_step_size': 1e-1,
-    'regularization': 1,
-    'n_samples': 50,
+    'regularization': 100,
+    'n_samples': 500,
     'bary_coords': bary_coords,
     'n_marginals': len(bary_coords)
 }
@@ -73,12 +73,15 @@ potential_2 = lambda x: utils.marginal_potential(x, mean_2, std_2)
 #mixture_12 = lambda x: -autograd_np.log(autograd_np.exp(-(x-mean_1)**2/2) + autograd_np.exp(-(x-mean_2)**2/2))
 #potential_1 = mixture_12
 
-gradient_potential_1 = egrad(potential_1)
-gradient_potential_2 = egrad(potential_2)
+#gradient_potential_1 = egrad(potential_1)
+#gradient_potential_2 = egrad(potential_2)
+gradient_potential_1 = np.vectorize(lambda x: (x-mean_1) / std_1**2)
+gradient_potential_2 = np.vectorize(lambda x: (x-mean_2) / std_2**2)
 
-
-laplacian_potential_1 = np.vectorize(lambda x: float(hessian(potential_1)(x)))
-laplacian_potential_2 = np.vectorize(lambda x: float(hessian(potential_2)(x)))
+#laplacian_potential_1 = np.vectorize(lambda x: float(hessian(potential_1)(x)))
+#laplacian_potential_2 = np.vectorize(lambda x: float(hessian(potential_2)(x)))
+laplacian_potential_1 = np.vectorize(lambda x: 1 / std_1**2)
+laplacian_potential_2 = np.vectorize(lambda x: 1 / std_2**2)
 
 kernel_1 = utils.inverse_schrodinger_kernel(mesh, np.vectorize(potential_1), \
     gradient_potential_1, laplacian_potential_1, simul_params['fd_step_size'], \
@@ -91,7 +94,7 @@ gradient_kernel_1 = utils.fd_kernel_gradient(kernel_1, simul_params['fd_step_siz
 gradient_kernel_2 = utils.fd_kernel_gradient(kernel_2, simul_params['fd_step_size'])
 kernel_gradients = [gradient_kernel_1, gradient_kernel_2]
 
-
+""" 
 def lawgd(mesh, kernel_gradient, simul_params):
     def lawgd_iteration(L, it):
         L_new = np.zeros(L.shape)
@@ -188,12 +191,12 @@ if do_lawgd:
     plt.show()
 
     quit(0)
-
+"""
 
 # simulation procedure in one dimension
 def bary_gd(mesh, kernel_gradients, simul_params):
     def lawgd_iteration(L):
-        L_new = np.copy(L)
+        L_new2 = np.copy(L)
 
         grads = np.zeros(L.shape)
 
@@ -209,12 +212,12 @@ def bary_gd(mesh, kernel_gradients, simul_params):
                 if simul_params['langevin_perturbation']:
                     grad += simul_params['langevin_factor']*np.sqrt(2*simul_params['gd_step_size'])*np.random.normal()
 
-                if np.abs(grad) > 20*simul_params['fd_step_size']: grad = 20*np.sign(grad)*simul_params['fd_step_size']
-                L_new[alpha, i] = L[alpha, i] - grad
+                #if np.abs(grad) > 20*simul_params['fd_step_size']: grad = 20*np.sign(grad)*simul_params['fd_step_size']
+                L_new2[alpha, i] = L[alpha, i] - grad
                 
                 grads[alpha, i] = grad
         
-        return L_new, grads
+        return L_new2, grads
 
 
     def bary_iteration(L):
@@ -222,15 +225,16 @@ def bary_gd(mesh, kernel_gradients, simul_params):
 
         for alpha in range(simul_params['n_marginals']):
             for i in range(simul_params['n_samples']):
-                mesh_projection_alpha = np.argmin(np.abs(L[alpha, i] - mesh))
                 c_gradient_alpha_i = \
                     simul_params['gd_step_size'] \
                     * utils.fd_c_grad(L[:, i], alpha, simul_params['bary_coords'], simul_params['tfd_step_size'], convexifier=simul_params['g_conv'])
 
                 L_new[alpha, i] = -c_gradient_alpha_i + L_new[alpha, i]
-                grads[alpha, i] = grads[alpha, i] - c_gradient_alpha_i
+                grads[alpha, i] = grads[alpha, i] + c_gradient_alpha_i
         
-        return L_new, grads
+        diffgrad = L_new - L
+        
+        return L_new, grads, diffgrad
 
     initial_domain_start, initial_domain_end = simul_params['initial_domain'][0], simul_params['initial_domain'][1]
     initial_domain_length = initial_domain_end - initial_domain_start
@@ -241,18 +245,23 @@ def bary_gd(mesh, kernel_gradients, simul_params):
     plt.ion()
 
     for iteration in range(simul_params['n_iterations']):
-        L, grads = bary_iteration(L)
+        L, grads, diffgrad = bary_iteration(L)
 
-        if iteration % 500 == 0:
+        if iteration % 1 == 0:
             plt.clf()
             plt.title('iteration {}'.format(iteration))
             plt.grid()
+            # plt.scatter(L[0, :], L[1, :], marker='x', c='r')
+            plt.hist(L[0, :], bins='auto', density=True, color='r', alpha=0.3)
+            plt.hist(L[1, :], bins='auto', density=True, color='b', alpha=0.3)
             plt.scatter(L_init[0, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
             plt.scatter(L_init[1, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
-            plt.scatter(L[0, :], np.zeros(L.shape[1]), c='r', marker='x')
-            plt.scatter(L[0, :], grads[0, :], c='g', alpha=0.5, marker='o')
-            plt.scatter(L[1, :], np.zeros(L.shape[1]), c='r', marker='x')
-            plt.scatter(L[1, :], grads[1, :], c='b', alpha=0.5, marker='o')
+            plt.scatter(L[0, :1], diffgrad[0, :1], c='r', marker='x', alpha=0.5)
+            plt.scatter(L[0, :1], np.zeros(L[0, :1].size), c='r', marker='x')
+            plt.scatter(L[0, :1], grads[0, :1], c='g', alpha=0.5, marker='o')
+            plt.scatter(L[1, :1], diffgrad[1, :1], c='b', marker='x', alpha=0.5)
+            plt.scatter(L[1, :1], np.zeros(L[1, :1].size), c='r', marker='x')
+            plt.scatter(L[1, :1], grads[1, :1], c='b', alpha=0.5, marker='o')
             plt.xlim(mesh.min(), mesh.max())
             plt.draw()
             plt.pause(0.001)

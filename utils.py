@@ -18,7 +18,7 @@ def c(x, lamb, convexifier=False):
     tr = np.trace(ldxslx.dot(ldxslx.T))
 
     if convexifier:
-        tr += np.trace(x.T.dot(x))
+        tr += 0.5*np.trace(x.T.dot(x))
 
     return tr
 
@@ -38,21 +38,21 @@ def fd_c_grad(X, marginal, lamb, epsilon, convexifier=False):
     return grad
 
 
-def marginal_potential(X, mu, sigma):
-    if not isinstance(X, float):
-        pot = 0.5 * np.dot((X - mu), (X - mu).T) / (sigma**2)
+def marginal_potential(mesh, mu, sigma):
+    if not isinstance(mesh, float):
+        pot = 0.5 * np.dot((mesh - mu), (mesh - mu).T) / (sigma**2)
     else:
-        pot = 0.5 * ((X - mu) / sigma)**2
+        pot = 0.5 * ((mesh - mu) / sigma)**2
 
     return pot
 
 
-def schrodinger_potential(X, grad_V, laplacian_V):
-    gVX = grad_V(X)
+def schrodinger_potential(mesh, grad_V, laplacian_V):
+    gVX = grad_V(mesh)
     #if X.ndim > 1 and X.shape[1] > 1:
     #    potential = (np.dot(gVX, gVX.T) - 2*laplacian_V(X)) / 4
     #else:
-    potential = (gVX**2 - 2*laplacian_V(X)) / 4
+    potential = (gVX**2 - 2*laplacian_V(mesh)) / 4
 
     return potential
 
@@ -64,9 +64,9 @@ def discrete_laplacian(n, epsilon):
     return laplace
 
 
-def schrodinger_laplacian(X, grad_V, laplacian_V, epsilon):
-    pot_op = np.diag(schrodinger_potential(X, grad_V, laplacian_V))
-    sl_op = -discrete_laplacian(X.shape[0], epsilon) + pot_op
+def schrodinger_laplacian(mesh, grad_V, laplacian_V, epsilon):
+    pot_op = np.diag(schrodinger_potential(mesh, grad_V, laplacian_V))
+    sl_op = -discrete_laplacian(mesh.shape[0], epsilon) + pot_op
 
     return sl_op
 
@@ -79,10 +79,11 @@ def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potent
 
     eta_S, phi_S = eigh(L_S)
     valid_indices = np.where(eta_S > 1e-2)[0]
-    eta_S[eta_S < 0] = np.min(eta_S[eta_S > 0])
     eta_S = eta_S[valid_indices]
     phi_S = phi_S.T[valid_indices]
     eta_S, phi_S = eta_S[:n_eigen], phi_S[:n_eigen]
+
+    pdb.set_trace()
 
     rescale = np.repeat(np.exp(potential(mesh)/2).reshape((1, -1)), repeats=phi_S.shape[0], axis=0)
     phi = np.multiply(rescale, phi_S)
