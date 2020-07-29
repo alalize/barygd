@@ -11,16 +11,19 @@ import matplotlib.pyplot as plt
 from numpy.polynomial.hermite_e import *
 
 
-def c(x, lamb):
+def c(x, lamb, convexifier=False):
     Lambda = np.diag(lamb)
     slx = np.repeat(np.sum(Lambda.dot(x), axis=0), repeats=x.shape[0], axis=0).reshape(x.shape)
     ldxslx = np.sqrt(Lambda).dot(x - slx)
     tr = np.trace(ldxslx.dot(ldxslx.T))
 
+    if convexifier:
+        tr += np.trace(x.T.dot(x))
+
     return tr
 
 
-def fd_c_grad(X, marginal, lamb, epsilon):
+def fd_c_grad(X, marginal, lamb, epsilon, convexifier=False):
     def e_alb(i, j):
         e = np.zeros(X.shape)
         e[i, j] = 1
@@ -28,7 +31,7 @@ def fd_c_grad(X, marginal, lamb, epsilon):
         return e
 
     grad = np.array([\
-        (c(X + epsilon*e_mj, lamb) - c(X - epsilon*e_mj, lamb)) / (2*epsilon) \
+        (c(X + epsilon*e_mj, lamb, convexifier) - c(X - epsilon*e_mj, lamb, convexifier)) / (2*epsilon) \
             for e_mj in [e_alb(marginal, j) \
             for j in range(X.shape[1])]])
 
