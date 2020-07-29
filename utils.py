@@ -78,8 +78,10 @@ def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potent
     L_S = schrodinger_laplacian(mesh, grad_potential, laplacian_potential, epsilon)
 
     eta_S, phi_S = eigh(L_S)
+    valid_indices = np.where(eta_S > 1e-2)[0]
     eta_S[eta_S < 0] = np.min(eta_S[eta_S > 0])
-    phi_S = phi_S.T
+    eta_S = eta_S[valid_indices]
+    phi_S = phi_S.T[valid_indices]
     eta_S, phi_S = eta_S[:n_eigen], phi_S[:n_eigen]
 
     rescale = np.repeat(np.exp(potential(mesh)/2).reshape((1, -1)), repeats=phi_S.shape[0], axis=0)
