@@ -13,12 +13,14 @@ import matplotlib.pyplot as plt
 import subprocess
 import utils
 import datetime
+from scipy.optimize import curve_fit
 
 
 np.random.seed(0)
 now_str = str(datetime.datetime.now()).replace(' ', '_')
 
-just_lawgd = False
+do_lawgd = False
+do_barygd = True
 
 
 # mesh parameters
@@ -29,30 +31,33 @@ mesh = np.linspace(mesh_x_min, mesh_x_max, num=n_mesh)
 
 
 # simulation parameters
-bary_coords = [1, 0]
+bary_coords = [0.5, 0.5]
+
 simul_params = {
     'n_schemes': 1,
     'n_eigenvalues': -1,
     'langevin_perturbation': False,
-    'langevin_factor': 8e-4,
-    'n_iterations': 20000,
+    'langevin_factor': 1,
+    'g_conv': True,
+    'n_iterations': 5000,
     'initial_domain': (4.5, 5),
     'fd_step_size': (mesh_x_max - mesh_x_min) / (n_mesh - 1),
     'tfd_step_size': 1e-6,
-    'gd_step_size': 1e-2,
+    'gd_step_size': 1e-1,
     'regularization': 1,
     'n_samples': 50,
     'bary_coords': bary_coords,
     'n_marginals': len(bary_coords)
 }
-exp_name = now_str + ''.join(['{}:{}_'.format(k[:4], simul_params[k]) for k in simul_params.keys()])
 
+
+exp_name = ('bar_' if do_barygd else 'law_') + now_str + ''.join(['{}:{}_'.format(k[:4], simul_params[k]) for k in simul_params.keys()])
 print('NAME:', exp_name)
 print('n_mesh: {}\t fd_step_size: {}'.format(n_mesh, simul_params['fd_step_size']))
 
 
 # definition of marginals
-mean_1, mean_2 = 0, 3
+mean_1, mean_2 = -3, 3
 std_1, std_2 = 1, 1
 marginal_1 = S.norm.pdf(mesh, loc=mean_1, scale=std_1)
 marginal_2 = S.norm.pdf(mesh, loc=mean_2, scale=std_2)
@@ -131,7 +136,7 @@ def lawgd(mesh, kernel_gradient, simul_params):
     return X, X_init
 
 
-if just_lawgd:
+if do_lawgd:
     swarm, swarm_init = lawgd(mesh, kernel_gradients[0], simul_params)
     valid_samples = swarm[np.where(np.logical_and(swarm < mesh.max(), swarm > mesh.min()))[0]]
     lawgd_density = S.gaussian_kde(valid_samples.reshape((-1,)))
@@ -190,82 +195,131 @@ def bary_gd(mesh, kernel_gradients, simul_params):
     def lawgd_iteration(L):
         L_new = np.copy(L)
 
+        grads = np.zeros(L.shape)
+
         for alpha in range(simul_params['n_marginals']):
             mesh_projections = [np.argmin(np.abs(L[alpha, j] - mesh)) for j in range(simul_params['n_samples'])]
 
             for i in range(simul_params['n_samples']):
-                L_new[alpha, i] = L[alpha, i] - \
-                    simul_params['gd_step_size'] \
-                        * simul_params['regularization'] \
-                        * simul_params['bary_coords'][alpha] \
-                        * np.sum(kernel_gradients[alpha][mesh_projections[i], mesh_projections], axis=0) \
-                        / simul_params['n_samples']
-
+                gradk = np.sum(kernel_gradients[alpha][mesh_projections[i], mesh_projections])
+                #pdb.set_trace()
+                grad = \
+                    simul_params['gd_step_size']*simul_params['regularization']*simul_params['bary_coords'][alpha] \
+                    * gradk / simul_params['n_samples']
                 if simul_params['langevin_perturbation']:
-                    L_new[alpha, i] = L_new[alpha, i] + simul_params['langevin_factor']*np.sqrt(2*simul_params['gd_step_size'])*np.random.normal()
+                    grad += simul_params['langevin_factor']*np.sqrt(2*simul_params['gd_step_size'])*np.random.normal()
+
+                if np.abs(grad) > 20*simul_params['fd_step_size']: grad = 20*np.sign(grad)*simul_params['fd_step_size']
+                L_new[alpha, i] = L[alpha, i] - grad
+                
+                grads[alpha, i] = grad
         
-        return L_new
+        return L_new, grads
 
 
-    def bary_iteration(X, L):
-        for alpha in range(simul_params['n_marginals']):
-            L[alpha, 0] = X[alpha]
-        L_new = lawgd_iteration(L)
-        X_new = np.copy(X)
+    def bary_iteration(L):
+        L_new, grads = lawgd_iteration(L)
 
         for alpha in range(simul_params['n_marginals']):
-            mesh_projection_alpha = np.argmin(np.abs(X[alpha] - mesh))
-            c_gradient_alpha = utils.fd_c_grad(X, alpha, simul_params['bary_coords'], simul_params['tfd_step_size'])
+            for i in range(simul_params['n_samples']):
+                mesh_projection_alpha = np.argmin(np.abs(L[alpha, i] - mesh))
+                c_gradient_alpha_i = \
+                    simul_params['gd_step_size'] \
+                    * utils.fd_c_grad(L[:, i], alpha, simul_params['bary_coords'], simul_params['tfd_step_size'], convexifier=simul_params['g_conv'])
 
-            X_new[alpha] = -simul_params['gd_step_size']*c_gradient_alpha + L_new[alpha, 0]
+                L_new[alpha, i] = -c_gradient_alpha_i + L_new[alpha, i]
+                grads[alpha, i] = grads[alpha, i] - c_gradient_alpha_i
         
-        return X_new, L_new
+        return L_new, grads
 
     initial_domain_start, initial_domain_end = simul_params['initial_domain'][0], simul_params['initial_domain'][1]
     initial_domain_length = initial_domain_end - initial_domain_start
-    X = S.uniform.rvs(loc=initial_domain_start, scale=initial_domain_length, size=simul_params['n_marginals']).reshape((-1, 1))
     L = S.uniform.rvs(loc=initial_domain_start, scale=initial_domain_length, size=simul_params['n_marginals']*simul_params['n_samples']) \
         .reshape((simul_params['n_marginals'], simul_params['n_samples'], 1))
-
-    X_init = np.copy(X)
+    L_init = np.copy(L)
 
     plt.ion()
 
     for iteration in range(simul_params['n_iterations']):
-        X, L = bary_iteration(X, L)
+        L, grads = bary_iteration(L)
 
         if iteration % 500 == 0:
             plt.clf()
             plt.title('iteration {}'.format(iteration))
             plt.grid()
+            plt.scatter(L_init[0, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
+            plt.scatter(L_init[1, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
             plt.scatter(L[0, :], np.zeros(L.shape[1]), c='r', marker='x')
+            plt.scatter(L[0, :], grads[0, :], c='g', alpha=0.5, marker='o')
             plt.scatter(L[1, :], np.zeros(L.shape[1]), c='r', marker='x')
+            plt.scatter(L[1, :], grads[1, :], c='b', alpha=0.5, marker='o')
             plt.xlim(mesh.min(), mesh.max())
             plt.draw()
             plt.pause(0.001)
 
     plt.ioff()
-    
-    for alpha in range(simul_params['n_marginals']):
-        L[alpha, 0] = X[alpha]
+    plt.close()
 
-    return X_init, X
+    return L_init, L
 
 
-# execute simulation and estimate the density of the barycenter using a gaussian kernel estimator
-init_samples, swarm = bary_gd(mesh, kernel_gradients, simul_params)
-for it in range(simul_params['n_schemes']-1):
-    init_new, swarm_new = bary_gd(mesh, kernel_gradients, simul_params)
+if do_barygd:
+    # execute simulation and estimate the density of the barycenter using a gaussian kernel estimator
+    init_samples, swarm = bary_gd(mesh, kernel_gradients, simul_params)
+    swarm = swarm.reshape((-1,))
+    init_samples = init_samples.reshape((-1,))
+    valid_samples = swarm[np.where(np.logical_and(swarm < mesh.max(), swarm > mesh.min()))[0]]
+    bary_density = S.gaussian_kde(valid_samples.reshape((-1,)))
 
-    np.append(init_samples, init_new, axis=0)
-    np.append(swarm, swarm_new, axis=0)
-
-valid_samples = swarm[np.where(np.logical_and(swarm < 10*mesh.max(), swarm > 10*mesh.min()))[0]]
-bary_density = S.gaussian_kde(valid_samples.reshape((-1,)))
-
-print('n_valid_samples:', valid_samples.size)
+    print('n_valid_samples:', valid_samples.size)
 
 
+    def linear_model(x, a, b):
+        return a*x + b
+
+
+    points = valid_samples
+    hist, bins = np.histogram(points, bins=50, density=True)
+    centers = np.array([0.5*(bins[i] + bins[i+1]) for i in range(50)])
+
+
+    y = np.log(hist)
+    valids = list(set(list(range(y.size))).difference(set(np.where(np.isinf(y))[0].tolist())))
+    x = 0.5*(centers-mean_1)**2
+    x, y = x[valids], y[valids]
+
+    ab_opt, pcov = curve_fit(linear_model, x, y)
+    p_err = round(np.abs((-1) - ab_opt[0]), 2)
+    print('fit parameters: (slope, ord) = {}'.format(ab_opt))
+    print('distnace to normal:', p_err)
+
+    t = np.linspace(x.min(), x.max())
+    y_fit = np.vectorize(lambda x: linear_model(x, ab_opt[0], ab_opt[1]))(t)
+
+
+    fig, axs = plt.subplots(nrows=1, ncols=2)
+
+    axs[0].set_title('fit to normal, slope: {}, fiterr: {}'.format(round(ab_opt[0], 2), p_err))
+    axs[0].scatter(x, y)
+    axs[0].plot(t, y_fit)
+    axs[0].grid()
+
+    axs[1].set_title('barygd samples')
+    axs[1].scatter(init_samples, np.zeros(init_samples.size), c='b', label='initial samples')
+    axs[1].scatter(valid_samples, np.zeros(valid_samples.size), c='r', label='lawgd samples')
+    axs[1].plot(mesh, bary_density.pdf(mesh), c='b', alpha=0.7, label='lawgd density')
+    axs[1].plot(mesh, bary_12, c='b', alpha=0.2, label='target density')
+    axs[1].plot(mesh, avg_12, c='b', alpha=0.1, label='average density')
+    axs[1].hist(valid_samples, density=True, color='r', alpha=0.1, bins='auto')
+    #axs[1].plot(mesh, mixture_plt, c='b', alpha=0.2, label='target density')
+    axs[1].grid()
+    axs[1].legend()
+
+    plt.savefig('./img/{}.png'.format(exp_name))
+    plt.show()
+
+
+"""
 # plot marginals and expected density, the coupling samples and the estimated density for the barycenter
 plt.clf()
 plt.title(r'barygd -- $\alpha = {0}$, niter = {1}'.format(simul_params['regularization'], simul_params['n_iterations']))
@@ -285,3 +339,4 @@ plt.xlim(mesh.min(), mesh.max())
 plt.grid()
 plt.legend()
 plt.show()
+"""
