@@ -8,6 +8,7 @@ from sklearn.preprocessing import normalize
 from autograd import grad, hessian
 from autograd import elementwise_grad as egrad
 import matplotlib.pyplot as plt
+from numpy.polynomial.hermite_e import *
 
 
 def c(x, lamb):
@@ -19,15 +20,6 @@ def c(x, lamb):
     return tr
 
 
-def fd_c_grad_ij(X, marginal, sample, lamb, epsilon):
-    e_ms = np.zeros(X.shape)
-    e_ms[marginal, sample] = 1
-    fd = (c(X + epsilon*e_ms, lamb) - c(X - epsilon*e_ms, lamb)) * e_ms / (2*epsilon)
-    fd = fd[marginal]
-
-    return fd
-
-
 def fd_c_grad(X, marginal, lamb, epsilon):
     def e_alb(i, j):
         e = np.zeros(X.shape)
@@ -35,24 +27,29 @@ def fd_c_grad(X, marginal, lamb, epsilon):
 
         return e
 
-    grad = np.array([(c(X + epsilon*e_mj, lamb) - c(X - epsilon*e_mj, lamb)) / (2*epsilon) for e_mj in [e_alb(marginal, j) for j in range(X.shape[1])]])
+    grad = np.array([\
+        (c(X + epsilon*e_mj, lamb) - c(X - epsilon*e_mj, lamb)) / (2*epsilon) \
+            for e_mj in [e_alb(marginal, j) \
+            for j in range(X.shape[1])]])
 
     return grad
 
 
 def marginal_potential(X, mu, sigma):
     if not isinstance(X, float):
-        return 0.5 * np.dot((X - mu), (X - mu).T) / (sigma**2)
+        pot = 0.5 * np.dot((X - mu), (X - mu).T) / (sigma**2)
     else:
-        return 0.5 * ((X - mu) / sigma)**2
+        pot = 0.5 * ((X - mu) / sigma)**2
+
+    return pot
 
 
 def schrodinger_potential(X, grad_V, laplacian_V):
     gVX = grad_V(X)
-    if X.ndim > 1 and X.shape[1] > 1:
-        potential = (np.dot(gVX, gVX.T) - 2*laplacian_V(X)) / 4
-    else:
-        potential = (gVX**2 - 2*laplacian_V(X)) / 4
+    #if X.ndim > 1 and X.shape[1] > 1:
+    #    potential = (np.dot(gVX, gVX.T) - 2*laplacian_V(X)) / 4
+    #else:
+    potential = (gVX**2 - 2*laplacian_V(X)) / 4
 
     return potential
 
@@ -71,22 +68,23 @@ def schrodinger_laplacian(X, grad_V, laplacian_V, epsilon):
     return sl_op
 
 
-def inverse_schrodinger_kernel(X, V, grad_V, laplacian_V, epsilon, n_eigen=-1):
+def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potential, epsilon, n_eigen=-1):
     if n_eigen == -1:
-        n_eigen = X.shape[0] - 1
+        n_eigen = mesh.shape[0] - 1
 
-    L_S = schrodinger_laplacian(X, grad_V, laplacian_V, epsilon)
+    L_S = schrodinger_laplacian(mesh, grad_potential, laplacian_potential, epsilon)
 
-    eta, phi = eigh(L_S)
-    eta, phi = eta[eta > 0], phi.T[eta > 0, :]
-    eta, phi = eta[:n_eigen], phi[:n_eigen, :]
+    eta_S, phi_S = eigh(L_S)
+    eta_S[eta_S < 0] = np.min(eta_S[eta_S > 0])
+    phi_S = phi_S.T
+    eta_S, phi_S = eta_S[:n_eigen], phi_S[:n_eigen]
 
-    rescale = np.repeat(np.exp(V(X)/2).reshape((1, phi.shape[1])), repeats=phi.shape[0], axis=0)
-    phi = rescale * phi
-    eta = inv(np.diag(eta))
-    psi = np.dot(np.sqrt(eta), phi)
+    rescale = np.repeat(np.exp(potential(mesh)/2).reshape((1, -1)), repeats=phi_S.shape[0], axis=0)
+    phi = np.multiply(rescale, phi_S)
+    eta = inv(np.diag(np.sqrt(eta_S)))
+    psi = np.dot(eta, phi)
 
-    K = np.dot(psi.T, psi).T
+    K = np.dot(psi.T, psi)
 
     return K
 
@@ -94,9 +92,9 @@ def inverse_schrodinger_kernel(X, V, grad_V, laplacian_V, epsilon, n_eigen=-1):
 def fd_kernel_gradient(k, epsilon):
     grad_k = np.zeros(k.shape)
 
-    grad_k[0] = (k[1, :] - k[0, :]) / epsilon
-    for i in range(1, k.shape[0]-1):
-        grad_k[i] = (k[i+1, :] - k[i-1, :]) / (2*epsilon)
-    grad_k[-1] = (k[-1, :] - k[-2, :]) / epsilon
+    grad_k[0] = (k[:, 1] - k[:, 0]) / epsilon
+    for i in range(1, k.shape[1]-1):
+        grad_k[i] = (k[:, i+1] - k[:, i-1]) / (2*epsilon)
+    grad_k[-1] = (k[:, -1] - k[:, -2]) / epsilon
 
     return grad_k
