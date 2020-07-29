@@ -25,7 +25,7 @@ do_barygd = True
 
 # mesh parameters
 n_mesh = 1024
-mesh_x_min, mesh_x_max = -6, 6
+mesh_x_min, mesh_x_max = -14, 14
 #mesh = np.ogrid[mesh_x_min:mesh_x_max:complex(0, n_mesh)]
 mesh = np.linspace(mesh_x_min, mesh_x_max, num=n_mesh)
 
@@ -38,14 +38,14 @@ simul_params = {
     'n_eigenvalues': -1,
     'langevin_perturbation': False,
     'langevin_factor': 1,
-    'g_conv': False,
-    'n_iterations': 200,
+    'g_conv': True,
+    'n_iterations': 2000,
     'initial_domain': (-0.5, 0.5),
     'fd_step_size': (mesh_x_max - mesh_x_min) / (n_mesh - 1),
     'tfd_step_size': 1e-6,
-    'gd_step_size': 1e-1,
+    'gd_step_size': 1e-2,
     'regularization': 100,
-    'n_samples': 500,
+    'n_samples': 250,
     'bary_coords': bary_coords,
     'n_marginals': len(bary_coords)
 }
@@ -245,23 +245,29 @@ def bary_gd(mesh, kernel_gradients, simul_params):
     plt.ion()
 
     for iteration in range(simul_params['n_iterations']):
+        if iteration > 0 and iteration % 100 == 0:
+            simul_params['gd_step_size'] /= 2
+            simul_params['regularization'] *= 2
+
         L, grads, diffgrad = bary_iteration(L)
 
-        if iteration % 1 == 0:
+        if iteration % 100 == 0:
             plt.clf()
             plt.title('iteration {}'.format(iteration))
             plt.grid()
-            # plt.scatter(L[0, :], L[1, :], marker='x', c='r')
-            plt.hist(L[0, :], bins='auto', density=True, color='r', alpha=0.3)
-            plt.hist(L[1, :], bins='auto', density=True, color='b', alpha=0.3)
-            plt.scatter(L_init[0, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
-            plt.scatter(L_init[1, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
-            plt.scatter(L[0, :1], diffgrad[0, :1], c='r', marker='x', alpha=0.5)
-            plt.scatter(L[0, :1], np.zeros(L[0, :1].size), c='r', marker='x')
-            plt.scatter(L[0, :1], grads[0, :1], c='g', alpha=0.5, marker='o')
-            plt.scatter(L[1, :1], diffgrad[1, :1], c='b', marker='x', alpha=0.5)
-            plt.scatter(L[1, :1], np.zeros(L[1, :1].size), c='r', marker='x')
-            plt.scatter(L[1, :1], grads[1, :1], c='b', alpha=0.5, marker='o')
+            plt.scatter(L[0, :], L[1, :], marker='x', c='r')
+            #plt.hist(L[0, :], bins='auto', density=True, color='r', alpha=0.3)
+            #plt.hist(L[1, :], bins='auto', density=True, color='b', alpha=0.3)
+            #plt.scatter(L_init[0, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
+            #plt.scatter(L_init[1, :], np.zeros(L.shape[1]), c='black', marker='x', alpha=0.05)
+            #plt.scatter(L[0, :], diffgrad[0, :], c='r', marker='x', alpha=0.5)
+            #plt.scatter(L[0, :], np.zeros(L[0, :].size), c='r', marker='x')
+            #plt.scatter(L[0, :], grads[0, :], c='g', alpha=0.5, marker='o')
+            #plt.scatter(L[1, :], diffgrad[1, :], c='b', marker='x', alpha=0.5)
+            #plt.scatter(L[1, :], np.zeros(L[1, :].size), c='r', marker='x')
+            #plt.scatter(L[1, :], grads[1, :], c='b', alpha=0.5, marker='o')
+            #plt.plot(mesh, marginal_1, c='black', alpha=0.3)
+            #plt.plot(mesh, marginal_2, c='black', alpha=0.3)
             plt.xlim(mesh.min(), mesh.max())
             plt.draw()
             plt.pause(0.001)
@@ -275,8 +281,9 @@ def bary_gd(mesh, kernel_gradients, simul_params):
 if do_barygd:
     # execute simulation and estimate the density of the barycenter using a gaussian kernel estimator
     init_samples, swarm = bary_gd(mesh, kernel_gradients, simul_params)
-    swarm = swarm.reshape((-1,))
     init_samples = init_samples.reshape((-1,))
+    pushforward = np.sum(swarm.T.dot(np.array(bary_coords)), axis=0)
+    swarm = pushforward
     valid_samples = swarm[np.where(np.logical_and(swarm < mesh.max(), swarm > mesh.min()))[0]]
     bary_density = S.gaussian_kde(valid_samples.reshape((-1,)))
 

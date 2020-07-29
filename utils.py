@@ -1,4 +1,5 @@
 import os
+from math import factorial, sqrt
 import pdb
 import numpy as np
 from numpy.linalg import eigh, inv
@@ -83,8 +84,6 @@ def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potent
     phi_S = phi_S.T[valid_indices]
     eta_S, phi_S = eta_S[:n_eigen], phi_S[:n_eigen]
 
-    pdb.set_trace()
-
     rescale = np.repeat(np.exp(potential(mesh)/2).reshape((1, -1)), repeats=phi_S.shape[0], axis=0)
     phi = np.multiply(rescale, phi_S)
     eta = inv(np.diag(np.sqrt(eta_S)))
@@ -92,15 +91,21 @@ def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potent
 
     K = np.dot(psi.T, psi)
 
+    """
+    phi = np.array([hermeval(mesh, np.eye(i+1)[-1]) / sqrt(factorial(i+1)) for i in range(n_eigen+1)])[1:]
+    eta = np.diag(1 / np.arange(start=1, stop=n_eigen+1))
+    K = phi.T.dot(eta).dot(phi)
+    """
+
     return K
 
 
 def fd_kernel_gradient(k, epsilon):
     grad_k = np.zeros(k.shape)
 
-    grad_k[0] = (k[:, 1] - k[:, 0]) / epsilon
+    grad_k[0] = (k[1] - k[0]) / epsilon
     for i in range(1, k.shape[1]-1):
-        grad_k[i] = (k[:, i+1] - k[:, i-1]) / (2*epsilon)
-    grad_k[-1] = (k[:, -1] - k[:, -2]) / epsilon
+        grad_k[i] = (k[i+1] - k[i-1]) / (2*epsilon)
+    grad_k[-1] = (k[-1] - k[-2]) / epsilon
 
     return grad_k
