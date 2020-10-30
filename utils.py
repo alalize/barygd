@@ -2,6 +2,7 @@ import os
 from math import factorial, sqrt
 import pdb
 import numpy as np
+import autograd.numpy as autograd_np
 from numpy.linalg import eigh, inv
 import scipy.stats as S
 import autograd.numpy as anp
@@ -24,6 +25,15 @@ def c(x, lamb, convexifier=False):
     return tr
 
 
+def dc(x, lamb, convex=False):
+    dx = np.zeros(x.shape)
+    conv = 1 if convex else 0
+    for k in range(x.shape[0]):
+        dx[k] = 2*lamb[k]*(x[k] - np.sum([lamb[i]*x[i] for i in range(0, x.shape[0])])) \
+            + x[k]*conv
+    return dx
+
+
 def fd_c_grad(X, marginal, lamb, epsilon, convexifier=False):
     def e_alb(i, j):
         e = np.zeros(X.shape)
@@ -39,20 +49,23 @@ def fd_c_grad(X, marginal, lamb, epsilon, convexifier=False):
     return grad
 
 
-def marginal_potential(mesh, mu, sigma):
-    if not isinstance(mesh, float):
+def gaussian_potential(mesh, mu, sigma):
+    if not isinstance(mesh, float): 
         pot = 0.5 * np.dot((mesh - mu), (mesh - mu).T) / (sigma**2)
-    else:
+    else: 
         pot = 0.5 * ((mesh - mu) / sigma)**2
 
     return pot
 
 
+def exponential_potential(mesh, loc, scale):
+    v = anp.abs((mesh - loc) / scale )
+
+    return v
+
+
 def schrodinger_potential(mesh, grad_V, laplacian_V):
     gVX = grad_V(mesh)
-    #if X.ndim > 1 and X.shape[1] > 1:
-    #    potential = (np.dot(gVX, gVX.T) - 2*laplacian_V(X)) / 4
-    #else:
     potential = (gVX**2 - 2*laplacian_V(mesh)) / 4
 
     return potential
@@ -86,16 +99,8 @@ def inverse_schrodinger_kernel(mesh, potential, grad_potential, laplacian_potent
 
     rescale = np.repeat(np.exp(potential(mesh)/2).reshape((1, -1)), repeats=phi_S.shape[0], axis=0)
     phi = np.multiply(rescale, phi_S)
-    eta = inv(np.diag(np.sqrt(eta_S)))
-    psi = np.dot(eta, phi)
-
-    K = np.dot(psi.T, psi)
-
-    """
-    phi = np.array([hermeval(mesh, np.eye(i+1)[-1]) / sqrt(factorial(i+1)) for i in range(n_eigen+1)])[1:]
-    eta = np.diag(1 / np.arange(start=1, stop=n_eigen+1))
+    eta = inv(np.diag(eta_S))
     K = phi.T.dot(eta).dot(phi)
-    """
 
     return K
 
@@ -109,3 +114,14 @@ def fd_kernel_gradient(k, epsilon):
     grad_k[-1] = (k[-1] - k[-2]) / epsilon
 
     return grad_k
+
+
+def svgd_gradient(K, dK,  dV, L, N, i):
+    grad = np.zeros(L.shape[-1])
+    for k in range(N):
+        grad = grad - dV(L[k]) * K(L[i], L[k]) + dK(L[i], L[k])
+    return grad / N
+
+
+norm2 = lambda x: x.dot(x)
+norm = lambda x: np.sqrt(norm2(x))
