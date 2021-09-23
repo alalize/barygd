@@ -1,0 +1,1 @@
+{"dimension": 1, "n_eigen": 50, "g_conv": true, "n_iterations": 5, "initial_domain": [[-1, 1]], "fd_step_size": 0.19569471624266144, "gd_step_size": 0.0005, "regularization": 1000, "n_samples": 100, "bary_coords": [0.5, 0.5], "n_marginals": 2, "laws": "norm-arctan", "film": true, "film_name": "0", "algorithm": "lawgd"}
